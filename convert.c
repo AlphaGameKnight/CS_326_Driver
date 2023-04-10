@@ -47,7 +47,8 @@
 /**********************************************************************/
 /*                         Function Prototypes                        */
 /**********************************************************************/
-void convert_block(int block_number);
+void convert_block(int block_number,    int *p_cylinder_number,
+                   int *p_track_number, int *p_sector_number);
     /* Convert block number to cylinder, track, and sector numbers    */
 
 /**********************************************************************/
@@ -55,17 +56,47 @@ void convert_block(int block_number);
 /**********************************************************************/
 int main()
 {
+   int cylinder_number, /* Cylinder number of the associated block */
+       track_number,    /* Track number of the associated block    */
+       sector_number,   /* Sector number of the associated block   */
+       counter;            /* Counts through all 360 disk blocks      */
 
-    return 0;
+   printf("Block   Cylinder   Track   Sector\n");
+   printf("-----   --------   -----   ------\n");
+   
+   for (counter = 0; counter <= 360; counter++)
+   {
+      convert_block(counter, &cylinder_number, &track_number, &sector_number);
+      printf(" %2d         %d          %d          %d", counter, cylinder_number,
+         track_number, sector_number);
+   }
+
+   return 0;
 }
 
 /**********************************************************************/
 /*     Convert block number to cylinder, track, and sector numbers    */
 /**********************************************************************/
-void convert_block(int block_number)
+void convert_block(int block_number,    int *p_cylinder_number,
+                   int *p_track_number, int *p_sector_number)
 {
+   /* Calculate the cylinder number from the associated block number  */
+   *p_cylinder_number = (TRUNC(block_number-1)/9);
 
-    return
+   /* Calculate the track number from the associated block number     */
+   if ((block_number-1)%9 <= 5)
+   {
+      *p_track_number    = 0;
+   }
+   else
+   {
+      *p_track_number    = 1;
+   }
+
+   /* Calculate the sector number from the associated block number    */
+   *p_sector_number = ((block_number-1)%9) * 2;
+
+   return;
 }
 
 
