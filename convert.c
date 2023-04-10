@@ -1,6 +1,6 @@
 /**********************************************************************/
 /*                                                                    */
-/* Program Name: scheduler - Simulate an operating system scheduler   */
+/* Program Name: convert - Convert File System block numbers          */
 /* Author:       William S. Wu                                        */
 /* Installation: Pensacola Christian College, Pensacola, Florida      */
 /* Course:       CS326, Operating Systems                             */
@@ -27,10 +27,45 @@
 
 /**********************************************************************/
 /*                                                                    */
-/* This program simulates the environement in UNIX where new          */
-/* processes are continually arriving, existing processes are vying   */
-/* for the CPU, processes are using their given quantum (CPU bound)   */
-/* or blocking because of I/O operations, and processees are          */
-/* terminating when their work is finished.                           */
+/* This program converts 360 File System blocks into their            */
+/* corresponding cylinder, track, and sector numbers.                 */
 /*                                                                    */
 /**********************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+
+/**********************************************************************/
+/*                         Symbolic Constants                         */
+/**********************************************************************/
+#define BYTES_PER_BLOCK     1024
+#define BYTES_PER_SECTOR    512
+#define CYLINDERS_PER_DISK  40
+#define SECTORS_PER_TRACK   9
+#define TRACKS_PER_CYLINDER 2
+
+/**********************************************************************/
+/*                         Function Prototypes                        */
+/**********************************************************************/
+void convert_block(int block_number);
+    /* Convert block number to cylinder, track, and sector numbers    */
+
+/**********************************************************************/
+/*                            Main Function                           */
+/**********************************************************************/
+int main()
+{
+
+    return 0;
+}
+
+/**********************************************************************/
+/*     Convert block number to cylinder, track, and sector numbers    */
+/**********************************************************************/
+void convert_block(int block_number)
+{
+
+    return
+}
+
+
