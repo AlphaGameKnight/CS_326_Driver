@@ -33,7 +33,7 @@
 /**********************************************************************/
 
 #include <stdio.h>
-#include <stdlib.h>
+#include <math.h>
 
 /**********************************************************************/
 /*                         Symbolic Constants                         */
@@ -59,15 +59,15 @@ int main()
    int cylinder_number, /* Cylinder number of the associated block */
        track_number,    /* Track number of the associated block    */
        sector_number,   /* Sector number of the associated block   */
-       counter;            /* Counts through all 360 disk blocks      */
+       counter;         /* Counts through all 360 disk blocks      */
 
    printf("Block   Cylinder   Track   Sector\n");
    printf("-----   --------   -----   ------\n");
    
-   for (counter = 0; counter <= 360; counter++)
+   for (counter = 1; counter <= 360; counter++)
    {
       convert_block(counter, &cylinder_number, &track_number, &sector_number);
-      printf(" %2d         %d          %d          %d", counter, cylinder_number,
+      printf("%3d         %d        %d        %d\n", counter, cylinder_number,
          track_number, sector_number);
    }
 
@@ -79,12 +79,12 @@ int main()
 /**********************************************************************/
 void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number)
-{
+{  
    /* Calculate the cylinder number from the associated block number  */
-   *p_cylinder_number = (TRUNC(block_number-1)/9);
+   *p_cylinder_number = (int) ((block_number-1)/9.0f);
 
    /* Calculate the track number from the associated block number     */
-   if ((block_number-1)%9 <= 5)
+   if ((block_number-1)%9 < 5)
    {
       *p_track_number    = 0;
    }
@@ -94,7 +94,14 @@ void convert_block(int block_number,    int *p_cylinder_number,
    }
 
    /* Calculate the sector number from the associated block number    */
-   *p_sector_number = ((block_number-1)%9) * 2;
+   if (((block_number-1)%9 * 2) < 9)
+   {
+      *p_sector_number = ((block_number-1)%9) * 2;
+   }
+   else
+   {
+      *p_sector_number = ((((block_number-1)%9) * 2) - 9);
+   }
 
    return;
 }
