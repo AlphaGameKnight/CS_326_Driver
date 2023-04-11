@@ -56,10 +56,10 @@ void convert_block(int block_number,    int *p_cylinder_number,
 /**********************************************************************/
 int main()
 {
-   int cylinder_number, /* Cylinder number of the associated block */
-       track_number,    /* Track number of the associated block    */
-       sector_number,   /* Sector number of the associated block   */
-       counter;         /* Counts through all 360 disk blocks      */
+   int cylinder_number, /* Cylinder number of the associated block    */
+       track_number,    /* Track number of the associated block       */
+       sector_number,   /* Sector number of the associated block      */
+       counter;         /* Counts through all 360 disk blocks         */
 
    printf("Block   Cylinder   Track   Sector\n");
    printf("-----   --------   -----   ------\n");
@@ -81,26 +81,29 @@ void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number)
 {  
    /* Calculate the cylinder number from the associated block number  */
-   *p_cylinder_number = (int) ((block_number-1)/9.0f);
+   *p_cylinder_number = (block_number - 1) / SECTORS_PER_TRACK;
 
    /* Calculate the track number from the associated block number     */
-   if ((block_number-1)%9 < 5)
+   if ((block_number - 1) % SECTORS_PER_TRACK < 5)
    {
-      *p_track_number    = 0;
+      *p_track_number = 0;
    }
    else
    {
-      *p_track_number    = 1;
+      *p_track_number = 1;
    }
 
    /* Calculate the sector number from the associated block number    */
-   if (((block_number-1)%9 * 2) < 9)
+   if (((block_number - 1) % SECTORS_PER_TRACK * TRACKS_PER_CYLINDER) < 
+                                                      SECTORS_PER_TRACK)
    {
-      *p_sector_number = ((block_number-1)%9) * 2;
+      *p_sector_number = ((block_number - 1) % SECTORS_PER_TRACK) * 
+                                                    TRACKS_PER_CYLINDER;
    }
    else
    {
-      *p_sector_number = ((((block_number-1)%9) * 2) - 9);
+      *p_sector_number = ((((block_number - 1) % SECTORS_PER_TRACK ) * 
+                              TRACKS_PER_CYLINDER) - SECTORS_PER_TRACK);
    }
 
    return;
