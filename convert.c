@@ -90,20 +90,15 @@ int main()
 void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number)
 {  
-   int block_remainder, /* Remainder of the block left                */
-       cylinder;        /* Cylinder number in a block                 */
+   int block_remainder; /* Remainder of the block left                */
        
-
-   cylinder =
-      (int) (1.0f/((float) BYTES_PER_BLOCK  /(float) BYTES_PER_SECTOR /
-                   (float) SECTORS_PER_TRACK/(float) TRACKS_PER_CYLINDER));
-   block_remainder = (block_number - 1) % cylinder;
+   block_remainder = (block_number - 1) % SECTORS_PER_TRACK;
    
    /* Calculate the cylinder number from its associated block number  */
-   *p_cylinder_number = (block_number - 1) / cylinder;
+   *p_cylinder_number = (block_number - 1) / SECTORS_PER_TRACK;
 
    /* Calculate the track number from its associated block number     */
-   if (block_remainder < (int) (((float) cylinder / 2.0f) + 0.5f))
+   if (block_remainder < (int) (((float) SECTORS_PER_TRACK * 0.5f) + 0.5f))
    {
       *p_track_number = 0;
    }
@@ -113,13 +108,13 @@ void convert_block(int block_number,    int *p_cylinder_number,
    }
 
    /* Calculate the sector number from its associated block number    */
-   if (block_remainder * TRACKS_PER_CYLINDER < cylinder)
+   if (block_remainder * TRACKS_PER_CYLINDER < SECTORS_PER_TRACK)
    {
       *p_sector_number = (block_remainder) * TRACKS_PER_CYLINDER;
    }
    else
    {
-      *p_sector_number = (block_remainder * TRACKS_PER_CYLINDER) - cylinder;
+      *p_sector_number = (block_remainder * TRACKS_PER_CYLINDER) - SECTORS_PER_TRACK;
    }
 
    return;
