@@ -27,14 +27,13 @@
 
 /**********************************************************************/
 /*                                                                    */
-/* This program converts 360 File System blocks into their            */
+/* This program converts File System blocks numbers into their        */
 /* corresponding cylinder, track, and sector numbers and displays the */
 /* the block number with the converted values.                        */
 /*                                                                    */
 /**********************************************************************/
 
 #include <stdio.h>
-#include <math.h>
 
 /**********************************************************************/
 /*                         Symbolic Constants                         */
@@ -57,26 +56,30 @@ void convert_block(int block_number,    int *p_cylinder_number,
 /**********************************************************************/
 int main()
 {
-   int blocks,          /* Number of blocks in the disk               */
-       counter,         /* Counts through all 360 disk blocks         */
-       cylinder_number, /* Cylinder number of the associated block    */
-       sector_number,   /* Sector number of the associated block      */
-       track_number;    /* Track number of the associated block       */
+   int block,     /* Block number                                      */
+       cylinder,  /* Cylinder number                                   */
+       max_block, /* Maximum block number for the disk drive           */
+       sector,    /* Sector number                                     */
+       track;     /* Track number                                      */
        
-   blocks =
-      (int) (1.0f / ((float) BYTES_PER_BLOCK  /(float) BYTES_PER_SECTOR   / 
-                     (float) SECTORS_PER_TRACK/(float) TRACKS_PER_CYLINDER/ 
-                     (float) CYLINDERS_PER_DISK));
+   max_block =
+            (CYLINDERS_PER_DISK * TRACKS_PER_CYLINDER * SECTORS_PER_TRACK *
+             BYTES_PER_SECTOR / BYTES_PER_BLOCK);
 
-   printf("Block   Cylinder   Track   Sector\n");
-   printf("-----   --------   -----   ------\n");
+   /* Print the heading lines                                          */
+   printf("     Block   Cylinder   Track   Sector");
+   printf("\n     -----   --------   -----   ------");
    
-   for (counter = 1; counter <= blocks; counter++)
+   /* Loop processing block numbers until it reaches end of disk drive */
+   for (block = 1; block <= max_block; block++)
    {
-      convert_block(counter, &cylinder_number, &track_number, &sector_number);
-      printf("%3d        %2d        %d        %d\n", counter, cylinder_number,
-         track_number, sector_number);
+      /* Convert a block number to its cylinder, track, and sector     */
+      /* numbers and display them in a table                           */
+      convert_block(block, &cylinder, &track, &sector);
+      printf("\n     %3d        %2d        %d        %d", block,
+         cylinder, track, sector);
    }
+   printf("\n");
 
    return 0;
 }
@@ -87,18 +90,20 @@ int main()
 void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number)
 {  
-   int cylinders_per_block; /* Number cylinders in a block            */
+   int block_remainder, /* Remainder of the block left                */
+       cylinder;        /* Cylinder number in a block                 */
+       
 
-   cylinders_per_block =
+   cylinder =
       (int) (1.0f/((float) BYTES_PER_BLOCK  /(float) BYTES_PER_SECTOR /
                    (float) SECTORS_PER_TRACK/(float) TRACKS_PER_CYLINDER));
+   block_remainder = (block_number - 1) % cylinder;
    
    /* Calculate the cylinder number from its associated block number  */
-   *p_cylinder_number = (block_number - 1) / cylinders_per_block;
+   *p_cylinder_number = (block_number - 1) / cylinder;
 
    /* Calculate the track number from its associated block number     */
-   if ((block_number - 1) % (cylinders_per_block) <
-                            (int) ((cylinders_per_block / 2.0f) + 0.5f))
+   if (block_remainder < (int) (((float) cylinder / 2.0f) + 0.5f))
    {
       *p_track_number = 0;
    }
@@ -108,16 +113,13 @@ void convert_block(int block_number,    int *p_cylinder_number,
    }
 
    /* Calculate the sector number from its associated block number    */
-   if (((block_number - 1) % cylinders_per_block) * TRACKS_PER_CYLINDER < 
-                                                    cylinders_per_block)
+   if (block_remainder * TRACKS_PER_CYLINDER < cylinder)
    {
-      *p_sector_number = ((block_number - 1) % cylinders_per_block) *
-                                                    TRACKS_PER_CYLINDER;
+      *p_sector_number = (block_remainder) * TRACKS_PER_CYLINDER;
    }
    else
    {
-      *p_sector_number = (((block_number - 1) % cylinders_per_block) *
-                             TRACKS_PER_CYLINDER) - cylinders_per_block;
+      *p_sector_number = (block_remainder * TRACKS_PER_CYLINDER) - cylinder;
    }
 
    return;
