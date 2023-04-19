@@ -35,6 +35,7 @@
 /**********************************************************************/
 
 #include <stdio.h>
+#include <stdlib.h>
 
 /**********************************************************************/
 /*                         Symbolic Constants                         */
@@ -46,6 +47,7 @@
                                  /* Total disk capacity in bytes      */
 #define DMA_SETUP_CODE      3    /* Code to set DMA chip registers    */
 #define MAX_SPEED_SECS      3    /* Max secs for motor's speed        */
+#define MESSAGE_SIZE        20   /* Size of a message to FILE SYSTEM  */
 #define READ_DATA_CODE      6    /* Code to read data                 */
 #define RECALIBRATE_CODE    9    /* Code to reset DISK heads          */
 #define SECTORS_PER_TRACK   9    /* Number of sectors in a track      */
@@ -59,19 +61,39 @@
 #define WRITE_DATA_CODE     7    /* Code to write data                */
 
 /**********************************************************************/
+/*                         Program Structures                         */
+/**********************************************************************/
+/* A message to the file system from the DISK driver                  */
+struct message
+{
+   int operation_code, /* DISK operation to be performed              */
+       request_number, /* A unique request number                     */
+       block_number,   /* Block number to be read or written          */
+       block_size;     /* Block size in bytes                         */
+   unsigned long int *p_data_address;
+                       /* Points to the data block in memory          */
+};
+typedef struct message MESSAGE;
+
+/**********************************************************************/
 /*                         Function Prototypes                        */
 /**********************************************************************/
+void send_message(MESSAGE *p_fs_message);
+   /* Send a message to the FILE SYSTEM                               */
 void disk_drive(int code, int arg1, int arg2, int arg3, int arg4);
-   /* Run the disk driver                                             */
-//void senseCylinder();
-//void seekToCylinder();
-//void dmaSetup();
-//void startMotor();
-//void statusMotor();
-//void readData();
-//void writeData();
-//void stopMotor();
-//void recalibrate();
+   /* Tell the DISK drive to perform some function                    */
+/*
+void senseCylinder();
+void seekToCylinder();
+void dmaSetup();
+void startMotor();
+void statusMotor();
+void readData();
+void writeData();
+void stopMotor();
+void recalibrate();
+*/
+
 
 
 /**********************************************************************/
@@ -79,46 +101,19 @@ void disk_drive(int code, int arg1, int arg2, int arg3, int arg4);
 /**********************************************************************/
 int main()
 {
+   MESSAGE fs_message[MESSAGE_SIZE];
+   int message_index;
    
-   
-   return 0;
-}
+   disk_drive(5, 0, 0, 0, 0);
+   send_message(fs_message);
 
-/**********************************************************************/
-/*                         Run the DISK driver                        */
-/**********************************************************************/
-void disk_drive(int code, int arg1, int arg2, int arg3, int arg4)
-{
-   switch(code)
+   for(message_index = 0; message_index < MESSAGE_SIZE; message_index++)
    {
-      case SENSE_CODE:
-         // sense_cylinder code
-         break;
-      case SEEK_CODE:
-         // seek_cylinder code
-         break;
-      case DMA_SETUP_CODE:
-         // dma_setup code
-         break;
-      case START_MOTOR_CODE:
-         // start_motor code
-         break;
-      case STATUS_MOTOR_CODE:
-         // status_motor code
-         break;
-      case READ_DATA_CODE:
-         // read_data code
-         break;
-      case WRITE_DATA_CODE:
-         // write_data code
-         break;
-      case STOP_MOTOR_CODE:
-         // stop_motor code
-         break;
-      case RECALIBRATE_CODE:
-         // recalibrate code
-         break;
-   }
-
-   return;
+      printf("\nOperation Code: %d", fs_message[message_index].operation_code);
+      printf("\nRequest Number: %d", fs_message[message_index].request_number);
+      printf("\nBlock Number  : %d", fs_message[message_index].block_number);
+      printf("\nBlock Size    : %d", fs_message[message_index].block_size);
+      printf("\n\n");
+   }   
+   return 0;
 }
