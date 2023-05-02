@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdbool.h>
 
 /**********************************************************************/
 /*                         Symbolic Constants                         */
@@ -94,6 +95,8 @@ int  disk_drive(int code, int arg1, int arg2, int arg3,
 void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number);
    /* Convert a block number to cylinder, track, and sector numbers   */
+int count_requests(MESSAGE *p_fs_message);
+   /* Count the number of pending requests                            */
 void sort_requests(MESSAGE *p_fs_message);
    /* Sort requests within the message by ascending block number      */
 void check_request(MESSAGE request);
@@ -114,98 +117,143 @@ int check_address(MESSAGE request);
 /**********************************************************************/
 int main()
 {
-   MESSAGE fs_message[MESSAGE_SIZE]; /* Message sent to FILE SYSTEM   */
-   int message_index;                /* Index for request in message  */
-   int block,                        /* Block number                  */
-       cylinder,                     /* Cylinder number               */
-       sector,                       /* Sector number                 */
-       track;                        /* Track number                  */
-                      
-   send_idle_message(fs_message);
+   MESSAGE *p_fs_message; /* Points to a message sent to FILE SYSTEM  */
+   int message_index;     /* Index for request in message             */
+   int cylinder,          /* Cylinder number                          */
+       sector,            /* Sector number                            */
+       status_code,       /* Status of an operation                   */
+       track;             /* Track number                             */
 
-   /*
-   for(message_index = 0; message_index < 1; message_index++)
-   {
-      printf("\nOperation Code: %d", fs_message[message_index].operation_code);
-      printf("\nRequest Number: %d", fs_message[message_index].request_number);
-      printf("\nBlock Number  : %d", fs_message[message_index].block_number);
-      printf("\nBlock Size    : %d", fs_message[message_index].block_size);
-      printf("\n\n");
-   }
-   */
+   /* Create an empty list of pending requests                        */
+   p_fs_message = (MESSAGE *) malloc(MESSAGE_SIZE * sizeof(MESSAGE));
 
-   if(disk_drive(START_MOTOR_CODE, 0, 0, 0, 0) == 1)
+   /* Send an idle message to the FILE SYSTEM, requesting work        */
+   send_idle_message(p_fs_message);
+
+   /* Loop continuously processing the pending requests list          */
+   while(true)
    {
+      if(p_fs_message[0].operation_code != 0 &&
+         p_fs_message[0].request_number != 0 &&
+         p_fs_message[0].block_number   != 0 &&
+         p_fs_message[0].block_size     != 0 &&
+         p_fs_message[0].p_data_address != NULL)
+      {
+         disk_drive(START_MOTOR_CODE, 0, 0, 0, 0);
+         disk_drive(STATUS_MOTOR_CODE, 0, 0, 0, 0);
+      }
+
       for(message_index = 0; message_index < MESSAGE_SIZE; message_index++)
       {
-         if(disk_drive(STATUS_MOTOR_CODE, 0, 0, 0, 0) == 0)
+         if(p_fs_message[message_index+1].operation_code != 0)
          {
-            convert_block(fs_message[message_index].block_number, &cylinder, &track, &sector);
-            
-            printf("\n");
-            printf("\nOperation Code: %d", fs_message[message_index].operation_code);
-            printf("\nRequest Number: %d", fs_message[message_index].request_number);
-            printf("\nBlock Number  : %d", fs_message[message_index].block_number);
-            printf("\nBlock Size    : %d", fs_message[message_index].block_size);
-            printf("\n\n");
+            sort_requests(p_fs_message);
+            printf("\n\nSORTING!!!!!!!!!\n\n");
+         }
+
+         printf("REQUESTS: %d", count_requests(p_fs_message));
+         
+         if(p_fs_message[message_index].operation_code == 1 ||
+            p_fs_message[message_index].operation_code == 2)
+         {  
+            convert_block(p_fs_message[message_index].block_number, &cylinder, &track, &sector);
+      
+            int counter;
+            for(counter = 0; counter < MESSAGE_SIZE; counter++)
+            {
+               printf("\nOperation Code: %d", p_fs_message[counter].operation_code);
+               printf("\nRequest Number: %d", p_fs_message[counter].request_number);
+               printf("\nBlock Number  : %d", p_fs_message[counter].block_number);
+               printf("\nBlock Size    : %d", p_fs_message[counter].block_size);
+               printf("\n\n");
+            }
 
             if(disk_drive(SENSE_CODE, 0, 0, 0, 0) != cylinder)
             {
-               
                printf("\n\nCylinder is: %d", disk_drive(SENSE_CODE, 0, 0, 0, 0));
                printf("\nCylinder should be: %d", cylinder);
                printf("\n\n");
                
-               while(disk_drive(SEEK_CODE, cylinder, 0, 0, 0) != cylinder &&
-                     disk_drive(SEEK_CODE, cylinder, 0, 0, 0) != -1)
+               while(status_code = disk_drive(SEEK_CODE, cylinder, 0, 0, 0),
+                     status_code != cylinder && status_code != -1)
                {
-                  printf("\n\nNot on correct cylinder\n\n");
+                  while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
                }
-            }
-            else
-            {
-               while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0)
-               {
-                  printf("\n\nNot on cylinder 0\n\n");
-               }
-               
-               if(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) == 0)
-               {
-                  disk_drive(SEEK_CODE, cylinder, 0, 0, 0);
-               }
-
             }
             
             if(disk_drive(DMA_SETUP_CODE, sector, track, 
-                          fs_message[message_index].block_size,
-                          fs_message[message_index].p_data_address) == 0)
+                        p_fs_message[message_index].block_size,
+                        p_fs_message[message_index].p_data_address) == 0)
             {
-               if(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) == 0)
+               switch(p_fs_message[message_index].operation_code)
                {
-                  fs_message[message_index].operation_code = 0;
-                  fs_message[message_index].request_number = fs_message[message_index].request_number;
-                  fs_message[message_index].block_number   = fs_message[message_index].block_number;
-                  fs_message[message_index].block_size     = fs_message[message_index].block_size;
-                  fs_message[message_index].p_data_address = fs_message[message_index].p_data_address;
-                  send_message(fs_message);
-
+                  case 1:
+                     switch(disk_drive(READ_DATA_CODE, 0, 0, 0, 0))
+                     {
+                        case -1:
+                           /* DMA error handling code here */
+                           break;
+                        case -2:
+                           while(disk_drive(READ_DATA_CODE, 0, 0, 0, 0) == -2);
+                        case  0:
+                           p_fs_message[message_index].operation_code = 0;
+                           printf("\n\nGOOD READ\n\n");
+                           send_message(p_fs_message);
+                           break;
+                        default:
+                           printf("\n\nREAD ERROR\n\n");
+                           break;
+                     }
+                     break;
+                  case 2:
+                     switch(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0))
+                     {
+                        case -1:
+                           /* DMA error handling code here */
+                           break;
+                        case -2:
+                           while(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) == -2);
+                        case  0:
+                           p_fs_message[message_index].operation_code = 0;
+                           printf("\n\nGOOD WRITE\n\n");
+                           send_message(p_fs_message);
+                           break;
+                        default:                           
+                           printf("\n\nWRITE ERROR\n\n");
+                           break;
+                     }
+                     break;
+                  default:
+                     printf("\n\nMESSAGE ERROR\n\n");
+                     break;
                }
-               else
-               {
-                  if(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) == 0)
-                  {
-                     fs_message[message_index].operation_code = 0;
-                     fs_message[message_index].request_number = fs_message[message_index].request_number;
-                     fs_message[message_index].block_number   = fs_message[message_index].block_number;
-                     fs_message[message_index].block_size     = fs_message[message_index].block_size;
-                     fs_message[message_index].p_data_address = fs_message[message_index].p_data_address;
-                     send_message(fs_message);
-
-                     printf("\n\nbooyah! Success\n\n");
-                  }
-               }
-            }    
+            }
          }
+         else
+         {
+            printf("\n\nEnd of Message\n\n");
+
+            int counter;
+            for(counter = 0; counter < MESSAGE_SIZE; counter++)
+            {
+               printf("\nOperation Code: %d", p_fs_message[counter].operation_code);
+               printf("\nRequest Number: %d", p_fs_message[counter].request_number);
+               printf("\nBlock Number  : %d", p_fs_message[counter].block_number);
+               printf("\nBlock Size    : %d", p_fs_message[counter].block_size);
+               printf("\n\n");
+            }
+            send_message(p_fs_message);
+            break;
+         }
+      }
+      
+      if(p_fs_message[0].operation_code == 0 &&
+         p_fs_message[0].request_number == 0 &&
+         p_fs_message[0].block_number   == 0 &&
+         p_fs_message[0].block_size     == 0 &&
+         p_fs_message[0].p_data_address == NULL)
+      {
+         disk_drive(STOP_MOTOR_CODE, 0, 0, 0, 0);
       }
    }
     
@@ -242,10 +290,28 @@ void convert_block(int block_number,    int *p_cylinder_number,
    }
    else
    {
-      *p_sector_number = (block_remainder * TRACKS_PER_CYLINDER) - SECTORS_PER_TRACK;
+      *p_sector_number =
+            (block_remainder * TRACKS_PER_CYLINDER) - SECTORS_PER_TRACK;
    }
 
    return;
+}
+
+/**********************************************************************/
+/*                Count the number of pending requests                */
+/**********************************************************************/
+int count_requests(MESSAGE *p_fs_message)
+{
+   int requests; /* Number of pending requests in the message         */
+
+   requests = 0;
+   while(requests < MESSAGE_SIZE &&
+         p_fs_message[requests].operation_code != 0)
+   {
+      requests += 1;
+   }
+   
+   return requests;
 }
 
 /**********************************************************************/
@@ -268,19 +334,27 @@ void send_idle_message(MESSAGE *p_fs_message)
 /**********************************************************************/
 void sort_requests(MESSAGE *p_fs_message)
 {
-   int message_index;    /* Index for request in message              */
-   MESSAGE temp_request; /* Temporary request for swap                */
+           
+   MESSAGE temp_request;  /* Temporary request for swap               */
+       int inner_index,   /* Loop control for inner loop              */
+           outer_index;   /* Loop control for outer loop              */
 
-   for(message_index = 0; message_index < MESSAGE_SIZE; message_index++)
+   for(outer_index = 0; outer_index < count_requests(p_fs_message);
+                                                          outer_index++)
    {
-      if(p_fs_message[message_index].block_number > p_fs_message[message_index + 1].block_number &&
-        (message_index + 1) < MESSAGE_SIZE);
+      for(inner_index = 0; inner_index < 
+                      (count_requests(p_fs_message) - 1); inner_index++)
       {
-         temp_request = p_fs_message[message_index];
-         p_fs_message[message_index] = p_fs_message[message_index + 1];
-         p_fs_message[message_index + 1] = temp_request;
+         if(p_fs_message[outer_index].block_number < 
+                                 p_fs_message[inner_index].block_number)
+         {
+            temp_request              = p_fs_message[outer_index];
+            p_fs_message[outer_index] = p_fs_message[inner_index];
+            p_fs_message[inner_index] = temp_request;
+         }
       }
    }
+      
 
    return;
 }
@@ -290,39 +364,193 @@ void sort_requests(MESSAGE *p_fs_message)
 /**********************************************************************/
 void check_request(MESSAGE request)
 {
-   if(check_operation_code(request) && check_request_number(request))
+   if(check_address       (request) && check_block_size    (request) &&
+      check_block_number  (request) && check_request_number(request) &&
+      check_operation_code(request))
    {
-      request.operation_code = INVALID_OPERATION + INVALID_REQUEST;
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_BLOCK   + INVALID_REQUEST    +
+                               INVALID_OPERATION;
    }
-   else
+   
+   if(check_address     (request) && check_block_size    (request) &&
+      check_block_number(request) && check_request_number(request))
    {
-      if(check_operation_code(request) && check_block_number(request))
-      {
-         request.operation_code = INVALID_OPERATION + INVALID_REQUEST;
-      }
-      else
-      {
-         if(check_request_number(request) && check_block_number(request))
-         {
-            request.operation_code = INVALID_REQUEST + INVALID_BLOCK;
-         }
-         else
-         {
-            if(check_operation_code(request) && check_request_number(request) &&
-               check_block_number(request))
-            {
-               request.operation_code = INVALID_OPERATION + 
-                                        INVALID_REQUEST + INVALID_BLOCK;
-            }
-            else
-            {
-               if(check_block_size(request) && check_operation_code(request))
-               {
-                  request.operation_code = INVALID_BLOCK_SIZE + INVALID_OPERATION;
-               }
-            }
-         }
-      }
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_BLOCK   + INVALID_REQUEST;
+   }
+
+   if(check_address     (request) && check_block_size    (request) &&
+      check_block_number(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_BLOCK   + INVALID_OPERATION;
+   }
+
+   if(check_address     (request) && check_block_size    (request) &&
+      check_block_number(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_BLOCK;
+   }
+
+   if(check_address       (request) && check_block_size    (request) &&
+      check_request_number(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_REQUEST + INVALID_OPERATION;
+   }
+
+   if(check_address       (request) && check_block_size(request) &&
+      check_request_number(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_REQUEST;
+   }
+
+   if(check_address       (request) && check_block_size(request) &&
+      check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
+                               INVALID_OPERATION;
+   }
+
+   if(check_address(request) && check_block_size(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE;
+   }
+
+   if(check_address     (request) && check_request_number(request) &&
+      check_block_number(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
+                               INVALID_BLOCK   + INVALID_OPERATION;
+   }
+
+   if(check_address     (request) && check_request_number(request) &&
+      check_block_number(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
+                               INVALID_BLOCK;
+   }
+
+   if(check_address       (request) && check_block_number(request) &&
+      check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK +
+                               INVALID_OPERATION;
+   }
+
+   if(check_address(request) && check_block_number(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK;
+   }
+
+   if(check_address       (request) && check_request_number(request) &&
+      check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
+                               INVALID_OPERATION;
+   }
+
+   if(check_address(request) && check_request_number(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST;
+   }
+
+   if(check_address(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_ADDRESS + INVALID_OPERATION;
+   }
+
+   if(check_address(request))
+   {
+      request.operation_code = INVALID_ADDRESS;
+   }
+
+   if(check_block_size    (request) && check_block_number  (request) &&
+      check_request_number(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
+                               INVALID_REQUEST    + INVALID_OPERATION;
+   }
+
+   if(check_block_size    (request) && check_block_number(request) &&
+      check_request_number(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
+                               INVALID_REQUEST;
+   }
+
+   if(check_block_size    (request) && check_block_number(request) &&
+      check_operation_code(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
+                               INVALID_OPERATION;
+   }
+
+   if(check_block_size(request) && check_block_number(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK;
+   }
+
+   if(check_block_size    (request) && check_request_number(request) &&
+      check_operation_code(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_REQUEST +
+                               INVALID_OPERATION;
+   }
+
+   if(check_block_size(request) && check_request_number(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_REQUEST;
+   }
+
+   if(check_block_size(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE + INVALID_OPERATION;
+   }
+
+   if(check_block_size(request))
+   {
+      request.operation_code = INVALID_BLOCK_SIZE;
+   }
+
+   if(check_block_number  (request) && check_request_number(request) &&
+      check_operation_code(request))
+   {
+      request.operation_code = INVALID_BLOCK + INVALID_REQUEST +
+                               INVALID_OPERATION;
+   }
+
+   if(check_block_number(request) && check_request_number(request))
+   {
+      request.operation_code = INVALID_BLOCK + INVALID_REQUEST;
+   }
+
+   if(check_block_number(request) &&check_operation_code(request))
+   {
+      request.operation_code = INVALID_BLOCK + INVALID_OPERATION;
+   }
+
+   if(check_block_number(request))
+   {
+      request.operation_code = INVALID_BLOCK;
+   }
+
+   if(check_request_number(request) && check_operation_code(request))
+   {
+      request.operation_code = INVALID_REQUEST + INVALID_OPERATION;
+   }
+
+   if(check_request_number(request))
+   {
+      request.operation_code = INVALID_REQUEST;
+   }
+
+   if(check_operation_code(request))
+   {
+      request.operation_code = INVALID_OPERATION;
    }
 
    return;
@@ -332,12 +560,7 @@ void check_request(MESSAGE request)
 /*             Check a request for invalid operation code             */
 /**********************************************************************/
 int check_operation_code(MESSAGE request)
-{  
-   if (request.operation_code != 1 || request.operation_code != 2)
-   {
-      request.operation_code = INVALID_OPERATION;
-   }
-   
+{   
    return (request.operation_code != 1 || request.operation_code != 2);
 }
 
@@ -346,11 +569,6 @@ int check_operation_code(MESSAGE request)
 /**********************************************************************/
 int check_request_number(MESSAGE request)
 {
-   if (request.request_number <= 0)
-   {
-      request.operation_code = INVALID_REQUEST;
-   }
-   
    return (request.request_number <= 0);
 }
 
@@ -359,11 +577,6 @@ int check_request_number(MESSAGE request)
 /**********************************************************************/
 int check_block_number(MESSAGE request)
 {
-   if (request.block_number < 1 || request.block_number > 360)
-   {
-      request.operation_code = INVALID_BLOCK;
-   }
-   
    return (request.block_number < 1 || request.block_number > 360);
 }
 
@@ -377,13 +590,6 @@ int check_block_size(MESSAGE request)
    bytes_per_cylinder = BYTES_PER_SECTOR * SECTORS_PER_TRACK *
                         TRACKS_PER_CYLINDER;
    
-   if (request.block_size < 0 || (double) request.block_size ==
-                               log10(request.block_size) / log10(2.0) ||
-                               request.block_size > bytes_per_cylinder)
-   {
-      request.operation_code = INVALID_BLOCK_SIZE;
-   }
-
    return (request.block_size < 0 ||
           (double) request.block_size ==
                                log10(request.block_size) / log10(2.0) ||
@@ -395,10 +601,5 @@ int check_block_size(MESSAGE request)
 /**********************************************************************/
 int check_address(MESSAGE request)
 {
-   if (request.p_data_address < 0)
-   {
-      request.operation_code = INVALID_ADDRESS;
-   }
-   
    return (request.p_data_address < 0);
 }
