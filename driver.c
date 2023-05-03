@@ -85,9 +85,7 @@ typedef struct message MESSAGE;
 /**********************************************************************/
 /*                         Function Prototypes                        */
 /**********************************************************************/
-void send_idle_message(MESSAGE *p_fs_message);
-   /* Send an idle message to the FILE SYSTEM to ask for jobs         */
-void send_message(MESSAGE *p_fs_message);
+void send_message(MESSAGE *fs_message);
    /* Send a message to the FILE SYSTEM                               */
 int  disk_drive(int code, int arg1, int arg2, int arg3, 
                                                unsigned long int *arg4);
@@ -95,11 +93,11 @@ int  disk_drive(int code, int arg1, int arg2, int arg3,
 void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number);
    /* Convert a block number to cylinder, track, and sector numbers   */
-int count_requests(MESSAGE *p_fs_message);
+int count_requests(MESSAGE *fs_message);
    /* Count the number of pending requests                            */
-void sort_requests(MESSAGE *p_fs_message);
+void sort_requests(MESSAGE *fs_message);
    /* Sort requests within the message by ascending block number      */
-void check_request(MESSAGE request);
+void check_request(MESSAGE request, MESSAGE *fs_message);
    /* Check a request for any incorrect parameters                    */
 int check_operation_code(MESSAGE request);
    /* Check a request for invalid operation code                      */
@@ -111,152 +109,224 @@ int check_block_size(MESSAGE request);
    /* Check a request for invalid block size                          */
 int check_address(MESSAGE request);
    /* Check a request for invalid data address                        */
+void schedule_disk(MESSAGE *fs_message);
+   /* Schedule the next request for the driver to work on             */
+
 
 /**********************************************************************/
 /*                           Main Function                            */
 /**********************************************************************/
 int main()
 {
-   MESSAGE *p_fs_message; /* Points to a message sent to FILE SYSTEM  */
-   int message_index;     /* Index for request in message             */
-   int cylinder,          /* Cylinder number                          */
-       sector,            /* Sector number                            */
-       status_code,       /* Status of an operation                   */
-       track;             /* Track number                             */
+   MESSAGE *fs_message; /* Points to message sent to/from FILE SYSTEM */
+   int cylinder,        /* Cylinder number                            */
+       drive_status,    /* Flag for the status of the disk drive      */
+       idle_counter,    /* Counter for number of idle requests        */
+       index,           /* Index for a request in the message         */
+       sector,          /* Sector number                              */
+       track;           /* Track number                               */
 
-   /* Create an empty list of pending requests                        */
-   p_fs_message = (MESSAGE *) malloc(MESSAGE_SIZE * sizeof(MESSAGE));
+   /* Create an empty list of pending requests to send to FILE SYSTEM */
+   fs_message = (MESSAGE *) malloc(MESSAGE_SIZE * sizeof(MESSAGE));
 
    /* Send an idle message to the FILE SYSTEM, requesting work        */
-   send_idle_message(p_fs_message);
+   send_message(fs_message);
+   drive_status = 0;
+   idle_counter = 0;
 
    /* Loop continuously processing the pending requests list          */
    while(true)
    {
-      if(p_fs_message[0].operation_code != 0 &&
-         p_fs_message[0].request_number != 0 &&
-         p_fs_message[0].block_number   != 0 &&
-         p_fs_message[0].block_size     != 0 &&
-         p_fs_message[0].p_data_address != NULL)
+      if(idle_counter == 0 && 
+         drive_status == 0 &&
+         fs_message[0].operation_code != 0)
       {
-         disk_drive(START_MOTOR_CODE, 0, 0, 0, 0);
+         drive_status = disk_drive(START_MOTOR_CODE, 0, 0, 0, 0);
          disk_drive(STATUS_MOTOR_CODE, 0, 0, 0, 0);
+         drive_status = -1;
       }
 
-      for(message_index = 0; message_index < MESSAGE_SIZE; message_index++)
+      /* Handle an idle requests                                      */
+      if(fs_message[0].operation_code == 0 &&
+         fs_message[0].request_number == 0 &&
+         fs_message[0].block_number   == 0 &&
+         fs_message[0].block_size     == 0)
       {
-         if(p_fs_message[message_index+1].operation_code != 0)
+         idle_counter += 1;
+         if(idle_counter == 2)
          {
-            sort_requests(p_fs_message);
-            printf("\n\nSORTING!!!!!!!!!\n\n");
-         }
-
-         printf("REQUESTS: %d", count_requests(p_fs_message));
-         
-         if(p_fs_message[message_index].operation_code == 1 ||
-            p_fs_message[message_index].operation_code == 2)
-         {  
-            convert_block(p_fs_message[message_index].block_number, &cylinder, &track, &sector);
-      
-            int counter;
-            for(counter = 0; counter < MESSAGE_SIZE; counter++)
-            {
-               printf("\nOperation Code: %d", p_fs_message[counter].operation_code);
-               printf("\nRequest Number: %d", p_fs_message[counter].request_number);
-               printf("\nBlock Number  : %d", p_fs_message[counter].block_number);
-               printf("\nBlock Size    : %d", p_fs_message[counter].block_size);
-               printf("\n\n");
-            }
-
-            if(disk_drive(SENSE_CODE, 0, 0, 0, 0) != cylinder)
-            {
-               printf("\n\nCylinder is: %d", disk_drive(SENSE_CODE, 0, 0, 0, 0));
-               printf("\nCylinder should be: %d", cylinder);
-               printf("\n\n");
+            send_message(fs_message);
+            if(drive_status == -1)
+            {  
+               disk_drive(STOP_MOTOR_CODE, 0, 0, 0, 0);
                
-               while(status_code = disk_drive(SEEK_CODE, cylinder, 0, 0, 0),
-                     status_code != cylinder && status_code != -1)
-               {
-                  while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
-               }
+               drive_status = 0;
+               idle_counter = 0;
             }
-            
-            if(disk_drive(DMA_SETUP_CODE, sector, track, 
-                        p_fs_message[message_index].block_size,
-                        p_fs_message[message_index].p_data_address) == 0)
+            else
             {
-               switch(p_fs_message[message_index].operation_code)
+               if(drive_status == 0)
                {
-                  case 1:
-                     switch(disk_drive(READ_DATA_CODE, 0, 0, 0, 0))
-                     {
-                        case -1:
-                           /* DMA error handling code here */
-                           break;
-                        case -2:
-                           while(disk_drive(READ_DATA_CODE, 0, 0, 0, 0) == -2);
-                        case  0:
-                           p_fs_message[message_index].operation_code = 0;
-                           printf("\n\nGOOD READ\n\n");
-                           send_message(p_fs_message);
-                           break;
-                        default:
-                           printf("\n\nREAD ERROR\n\n");
-                           break;
-                     }
-                     break;
-                  case 2:
-                     switch(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0))
-                     {
-                        case -1:
-                           /* DMA error handling code here */
-                           break;
-                        case -2:
-                           while(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) == -2);
-                        case  0:
-                           p_fs_message[message_index].operation_code = 0;
-                           printf("\n\nGOOD WRITE\n\n");
-                           send_message(p_fs_message);
-                           break;
-                        default:                           
-                           printf("\n\nWRITE ERROR\n\n");
-                           break;
-                     }
-                     break;
-                  default:
-                     printf("\n\nMESSAGE ERROR\n\n");
-                     break;
+                  idle_counter = 0;
                }
             }
          }
-         else
-         {
-            printf("\n\nEnd of Message\n\n");
+         continue;
+      }
+      else
+      {
+         
+         printf("\nOperation Code: %d", fs_message[0].operation_code);
+         printf("\nRequest Number: %d", fs_message[0].request_number);
+         printf("\nBlock Number  : %d", fs_message[0].block_number);
+         printf("\nBlock Size    : %d", fs_message[0].block_size);
+         printf("\n\n");
 
+         int oof;
+            printf("\n\nBefore sorting222:");
+            for(oof = 0; oof < MESSAGE_SIZE; oof++)
+            {
+               printf("\nRequest Number: %d", fs_message[oof].request_number);
+            }
+            printf("\n\n");
+            
+            sort_requests(fs_message);
+            
+            /*check_request(fs_message[index], fs_message);*/
             int counter;
+            printf("\n\nAfter sorting:");
             for(counter = 0; counter < MESSAGE_SIZE; counter++)
             {
-               printf("\nOperation Code: %d", p_fs_message[counter].operation_code);
-               printf("\nRequest Number: %d", p_fs_message[counter].request_number);
-               printf("\nBlock Number  : %d", p_fs_message[counter].block_number);
-               printf("\nBlock Size    : %d", p_fs_message[counter].block_size);
-               printf("\n\n");
+               printf("\nRequest Number: %d", fs_message[counter].request_number);
             }
-            send_message(p_fs_message);
-            break;
+            printf("\n\n");
+         
+         
+         /* Process each individual request in the list                  */
+         for(index = 0; index < MESSAGE_SIZE; index++)
+         {           
+            sort_requests(fs_message);
+
+            printf("\n\nAfter sorting:");
+            for(oof = 0; oof < MESSAGE_SIZE; oof++)
+            {
+               printf("\nRequest Number: %d", fs_message[oof].request_number);
+            }
+            printf("\n\n");
+
+            int counter;
+            printf("\n\nList:");
+            for(counter = 0; counter < MESSAGE_SIZE; counter++)
+            {
+               printf("\nRequest Number: %d", fs_message[counter].request_number);
+            }
+            printf("\n\n");
+
+            printf("\nindex: %d", index);
+
+            if((fs_message[index].operation_code == 1  ||
+                fs_message[index].operation_code == 2) &&
+                fs_message[0].operation_code != 0)
+            {            
+               convert_block(fs_message[index].block_number, &cylinder,
+                                                         &track, &sector);
+
+               /* Seek for the correct cylinder the request is at        */
+               if(disk_drive(SENSE_CODE, 0, 0, 0, 0) != cylinder)
+               {
+                  printf("\n\nCylinder is: %d", disk_drive(SENSE_CODE, 0, 0, 0, 0));
+                  printf("\nCylinder should be: %d", cylinder);
+                  printf("\n\n");
+
+                  while(disk_drive(SEEK_CODE, cylinder, 0, 0, 0) != cylinder)
+                  {
+                     while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
+                  }
+               }
+
+               /* Set DMA chip registers for the next read/write job    */
+               disk_drive(DMA_SETUP_CODE, sector, track,
+                          fs_message[index].block_size,
+                          fs_message[index].p_data_address);
+               
+               if(fs_message[index].operation_code == 1)
+               {
+                  /* Perform read request and fix checksum errors      */  
+                  while(disk_drive(READ_DATA_CODE, 0, 0, 0, 0) != 0);
+                  fs_message[index].operation_code = 0;
+                  
+                  
+                  
+
+                  int oof;
+                  printf("\n\nList before sending:");
+                  for(oof = 0; oof < MESSAGE_SIZE; oof++)
+                  {
+                     printf("\nRequest Number: %d", fs_message[oof].request_number);
+                  }
+                  printf("\n\n");
+
+                  send_message(fs_message);
+                  
+
+                  if(fs_message[index].request_number == 0 &&
+                     index == 0)
+                  {
+                     printf("\n\nVerified!\n\n");
+                     sort_requests(fs_message);
+                  }
+
+                  break;
+               }
+               else
+               {
+                  /* Perform write request and fix checksum errors     */
+                  while(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) != 0);
+                  fs_message[index].operation_code = 0;
+                  
+                  printf("\n\nList before sending333:");
+                  for(oof = 0; oof < MESSAGE_SIZE; oof++)
+                  {
+                     printf("\nRequest Number: %d", fs_message[oof].request_number);
+                  }
+                  printf("\n\n");
+
+                  send_message(fs_message);
+                  
+                  printf("\n\nList after sending:");
+                  for(oof = 0; oof < MESSAGE_SIZE; oof++)
+                  {
+                     printf("\nRequest Number: %d", fs_message[oof].request_number);
+                  }
+                  printf("\n\n");
+
+                  if(fs_message[index].request_number == 0 &&
+                     index == 0)
+                  {
+                     printf("\n\nVerified 2!\n\n");
+                     sort_requests(fs_message);
+                  }
+
+                  
+
+                  break;
+               }
+            }
+            else
+            {
+               if(fs_message[0].operation_code == 0)
+               {
+                  index = 0;
+               }
+               else
+               {
+                  break;
+               }
+            }
          }
-      }
-      
-      if(p_fs_message[0].operation_code == 0 &&
-         p_fs_message[0].request_number == 0 &&
-         p_fs_message[0].block_number   == 0 &&
-         p_fs_message[0].block_size     == 0 &&
-         p_fs_message[0].p_data_address == NULL)
-      {
-         disk_drive(STOP_MOTOR_CODE, 0, 0, 0, 0);
       }
    }
-    
+
    return 0;
 }
 
@@ -300,13 +370,14 @@ void convert_block(int block_number,    int *p_cylinder_number,
 /**********************************************************************/
 /*                Count the number of pending requests                */
 /**********************************************************************/
-int count_requests(MESSAGE *p_fs_message)
+int count_requests(MESSAGE *fs_message)
 {
    int requests; /* Number of pending requests in the message         */
 
    requests = 0;
    while(requests < MESSAGE_SIZE &&
-         p_fs_message[requests].operation_code != 0)
+         fs_message[requests].operation_code != 0 &&
+         fs_message[requests+1].operation_code != 0)
    {
       requests += 1;
    }
@@ -315,46 +386,28 @@ int count_requests(MESSAGE *p_fs_message)
 }
 
 /**********************************************************************/
-/*      Send an idle message to the FILE SYSTEM to ask for jobs       */
-/**********************************************************************/
-void send_idle_message(MESSAGE *p_fs_message)
-{
-   p_fs_message[0].operation_code = 0;
-   p_fs_message[0].request_number = 0;
-   p_fs_message[0].block_number   = 0;
-   p_fs_message[0].block_size     = 0;
-   p_fs_message[0].p_data_address = NULL;
-   send_message(p_fs_message);
-
-   return;
-}
-
-/**********************************************************************/
 /*     Sort requests within the message by ascending block number     */
 /**********************************************************************/
-void sort_requests(MESSAGE *p_fs_message)
-{
-           
-   MESSAGE temp_request;  /* Temporary request for swap               */
-       int inner_index,   /* Loop control for inner loop              */
-           outer_index;   /* Loop control for outer loop              */
+void sort_requests(MESSAGE *fs_message)
+{        
+   MESSAGE temp_request; /* Temporary request for swap               */
+       int index;        /* Index for a request in the message       */
 
-   for(outer_index = 0; outer_index < count_requests(p_fs_message);
-                                                          outer_index++)
+   index = 0;
+   while(index < MESSAGE_SIZE)
    {
-      for(inner_index = 0; inner_index < 
-                      (count_requests(p_fs_message) - 1); inner_index++)
+      if(((fs_message[index].block_number > 
+           fs_message[index+1].block_number) &&
+          (fs_message[index+1].block_number != 0)) ||
+          (fs_message[index].block_number == 0))
       {
-         if(p_fs_message[outer_index].block_number < 
-                                 p_fs_message[inner_index].block_number)
-         {
-            temp_request              = p_fs_message[outer_index];
-            p_fs_message[outer_index] = p_fs_message[inner_index];
-            p_fs_message[inner_index] = temp_request;
-         }
+         temp_request        = fs_message[index];
+         fs_message[index]   = fs_message[index+1];
+         fs_message[index+1] = temp_request;
       }
-   }
       
+      index++;
+   }
 
    return;
 }
@@ -362,7 +415,7 @@ void sort_requests(MESSAGE *p_fs_message)
 /**********************************************************************/
 /*            Check a request for any incorrect parameters            */
 /**********************************************************************/
-void check_request(MESSAGE request)
+void check_request(MESSAGE request, MESSAGE *fs_message)
 {
    if(check_address       (request) && check_block_size    (request) &&
       check_block_number  (request) && check_request_number(request) &&
@@ -371,6 +424,8 @@ void check_request(MESSAGE request)
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_BLOCK   + INVALID_REQUEST    +
                                INVALID_OPERATION;
+
+      send_message(fs_message);
    }
    
    if(check_address     (request) && check_block_size    (request) &&
@@ -378,6 +433,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_BLOCK   + INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_address     (request) && check_block_size    (request) &&
@@ -385,6 +442,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_BLOCK   + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address     (request) && check_block_size    (request) &&
@@ -392,6 +451,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_BLOCK;
+      
+      send_message(fs_message);
    }
 
    if(check_address       (request) && check_block_size    (request) &&
@@ -399,6 +460,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_REQUEST + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address       (request) && check_block_size(request) &&
@@ -406,6 +469,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_address       (request) && check_block_size(request) &&
@@ -413,11 +478,15 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
                                INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address(request) && check_block_size(request))
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE;
+      
+      send_message(fs_message);
    }
 
    if(check_address     (request) && check_request_number(request) &&
@@ -425,6 +494,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
                                INVALID_BLOCK   + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address     (request) && check_request_number(request) &&
@@ -432,6 +503,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
                                INVALID_BLOCK;
+      
+      send_message(fs_message);
    }
 
    if(check_address       (request) && check_block_number(request) &&
@@ -439,11 +512,15 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK +
                                INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address(request) && check_block_number(request))
    {
       request.operation_code = INVALID_ADDRESS + INVALID_BLOCK;
+      
+      send_message(fs_message);
    }
 
    if(check_address       (request) && check_request_number(request) &&
@@ -451,21 +528,29 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
                                INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address(request) && check_request_number(request))
    {
       request.operation_code = INVALID_ADDRESS + INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_address(request) && check_operation_code(request))
    {
       request.operation_code = INVALID_ADDRESS + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_address(request))
    {
       request.operation_code = INVALID_ADDRESS;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size    (request) && check_block_number  (request) &&
@@ -473,6 +558,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
                                INVALID_REQUEST    + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size    (request) && check_block_number(request) &&
@@ -480,6 +567,8 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
                                INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size    (request) && check_block_number(request) &&
@@ -487,11 +576,15 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
                                INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size(request) && check_block_number(request))
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size    (request) && check_request_number(request) &&
@@ -499,21 +592,29 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_REQUEST +
                                INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size(request) && check_request_number(request))
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size(request) && check_operation_code(request))
    {
       request.operation_code = INVALID_BLOCK_SIZE + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_block_size(request))
    {
       request.operation_code = INVALID_BLOCK_SIZE;
+      
+      send_message(fs_message);
    }
 
    if(check_block_number  (request) && check_request_number(request) &&
@@ -521,36 +622,50 @@ void check_request(MESSAGE request)
    {
       request.operation_code = INVALID_BLOCK + INVALID_REQUEST +
                                INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_block_number(request) && check_request_number(request))
    {
       request.operation_code = INVALID_BLOCK + INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_block_number(request) &&check_operation_code(request))
    {
       request.operation_code = INVALID_BLOCK + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_block_number(request))
    {
       request.operation_code = INVALID_BLOCK;
+      
+      send_message(fs_message);
    }
 
    if(check_request_number(request) && check_operation_code(request))
    {
       request.operation_code = INVALID_REQUEST + INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    if(check_request_number(request))
    {
       request.operation_code = INVALID_REQUEST;
+      
+      send_message(fs_message);
    }
 
    if(check_operation_code(request))
    {
       request.operation_code = INVALID_OPERATION;
+      
+      send_message(fs_message);
    }
 
    return;
@@ -602,4 +717,26 @@ int check_block_size(MESSAGE request)
 int check_address(MESSAGE request)
 {
    return (request.p_data_address < 0);
+}
+
+/**********************************************************************/
+/*         Schedule the next request for the driver to work on        */
+/**********************************************************************/
+void schedule_disk(MESSAGE *fs_message)
+{
+   int cylinder,        /* Cylinder number                            */
+       sector,          /* Sector number                              */
+       track;           /* Track number                               */
+   
+   convert_block(fs_message[1].block_number, &cylinder, &track, &sector);
+
+   if(disk_drive(SENSE_CODE, 0, 0, 0, 0) < cylinder)
+   {
+      while(disk_drive(SEEK_CODE, 0, 0, 0, 0) != cylinder)
+      {
+         while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
+      }
+   }
+
+   return;
 }
