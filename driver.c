@@ -87,6 +87,8 @@ typedef struct message MESSAGE;
 /**********************************************************************/
 void send_message(MESSAGE *fs_message);
    /* Send a message to the FILE SYSTEM                               */
+void add_request(MESSAGE *fs_message, MESSAGE *p_pending_requests);
+   /* Add requests to driver's pending requests list from FILE SYSTEM */
 int  disk_drive(int code, int arg1, int arg2, int arg3, 
                                                unsigned long int *arg4);
    /* Tell the DISK drive to perform some function                    */
@@ -118,7 +120,9 @@ void schedule_disk(MESSAGE *fs_message);
 /**********************************************************************/
 int main()
 {
-   MESSAGE *fs_message; /* Points to message sent to/from FILE SYSTEM */
+   MESSAGE *fs_message, /* Points to message sent to/from FILE SYSTEM */
+           *p_pending_requests;
+                        /* Points to driver's pending requests list   */
    int cylinder,        /* Cylinder number                            */
        drive_status,    /* Flag for the status of the disk drive      */
        idle_counter,    /* Counter for number of idle requests        */
@@ -126,8 +130,11 @@ int main()
        sector,          /* Sector number                              */
        track;           /* Track number                               */
 
-   /* Create an empty list of pending requests to send to FILE SYSTEM */
+   /* Create the message to be sent to and from the FILE SYSTEM       */
    fs_message = (MESSAGE *) malloc(MESSAGE_SIZE * sizeof(MESSAGE));
+   
+   /* Create the driver's empty list of pending requests              */
+   p_pending_requests[MESSAGE_SIZE];
 
    /* Send an idle message to the FILE SYSTEM, requesting work        */
    send_message(fs_message);
