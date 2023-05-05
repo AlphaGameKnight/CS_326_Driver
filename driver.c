@@ -55,6 +55,8 @@
 #define INVALID_BLOCK_SIZE  -8   /* Error for invalid block size      */
 #define MAX_SPEED_SECS      3    /* Max secs for motor's speed        */
 #define MESSAGE_SIZE        20   /* Size of a message to FILE SYSTEM  */
+#define MOTOR_OFF           0    /* Status of motor when off          */
+#define IDLE_MOTOR_OFF      2    /* Code indicating DISK motor is off */
 #define READ_DATA_CODE      6    /* Code to read data                 */
 #define RECALIBRATE_CODE    9    /* Code to reset DISK heads          */
 #define SECTORS_PER_TRACK   9    /* Number of sectors in a track      */
@@ -73,268 +75,217 @@
 /* A message to the file system from the DISK driver                  */
 struct message
 {
-   int operation_code, /* DISK operation to be performed              */
-       request_number, /* A unique request number                     */
-       block_number,   /* Block number to be read or written          */
-       block_size;     /* Block size in bytes                         */
+                 int operation_code, /* Operation to be performed     */
+                     request_number, /* A unique request number       */
+                     block_number,   /* Block to be read or written   */
+                     block_size;     /* Block size in bytes           */
    unsigned long int *p_data_address;
-                       /* Points to the data block in memory          */
+                                     /* Points to a memory data block */
 };
 typedef struct message MESSAGE;
 
 /**********************************************************************/
 /*                         Function Prototypes                        */
 /**********************************************************************/
-void send_message(MESSAGE *fs_message);
-   /* Send a message to the FILE SYSTEM                               */
-void add_request(MESSAGE *fs_message, MESSAGE *p_pending_requests);
-   /* Add requests to driver's pending requests list from FILE SYSTEM */
+
+void send_message(MESSAGE *p_request_list);
+   /* Send a message to the FILE SYSTEM from the driver               */
+void create_idle_request(MESSAGE *fs_message);
+   /* Create an idle request for the FILE SYSTEM to request work      */
+void populate_driver_list(MESSAGE *fs_message,
+                          MESSAGE *pending_requests, int *p_requests);
+   /* Populate driver's requests list with FILE SYSTEM requests       */
+void populate_message(MESSAGE *fs_message, MESSAGE *pending_requests);
+   /* Populate message for FILE SYSTEM with completed request         */
 int  disk_drive(int code, int arg1, int arg2, int arg3, 
                                                unsigned long int *arg4);
    /* Tell the DISK drive to perform some function                    */
 void convert_block(int block_number,    int *p_cylinder_number,
                    int *p_track_number, int *p_sector_number);
    /* Convert a block number to cylinder, track, and sector numbers   */
-int count_requests(MESSAGE *fs_message);
+int count_requests(MESSAGE *p_request_list);
    /* Count the number of pending requests                            */
-void sort_requests(MESSAGE *fs_message);
+void sort_requests(MESSAGE *p_request_list, int *p_requests);
    /* Sort requests within the message by ascending block number      */
-void check_request(MESSAGE request, MESSAGE *fs_message);
-   /* Check a request for any incorrect parameters                    */
-int check_operation_code(MESSAGE request);
-   /* Check a request for invalid operation code                      */
-int check_request_number(MESSAGE request);
-   /* Check a request for invalid request number                      */
-int check_block_number(MESSAGE request);
-   /* Check a request for invalid block number                        */
-int check_block_size(MESSAGE request);
-   /* Check a request for invalid block size                          */
-int check_address(MESSAGE request);
-   /* Check a request for invalid data address                        */
-void schedule_disk(MESSAGE *fs_message);
-   /* Schedule the next request for the driver to work on             */
-
+void remove_finished_request(MESSAGE *p_request_list);
+   /* Remove a finished request from the driver's pending requst list */
+int check_request(MESSAGE request);
+   /* Check a pending request for any incorrect parameters            */
+void clear_requests(MESSAGE *p_request_list);
+   /* Clear requests from a request list                              */
+void clear_first_request(MESSAGE *p_request_list, int *p_requests);
+   /* Clear data from a completed request in the pending list         */
+void reset_lists(MESSAGE *p_request_list, MESSAGE *p_message_list,
+                                                       int *p_requests);
+   /* Resets the pending requests lists for more requests             */
 
 /**********************************************************************/
 /*                           Main Function                            */
 /**********************************************************************/
 int main()
 {
-   MESSAGE *fs_message, /* Points to message sent to/from FILE SYSTEM */
-           *p_pending_requests;
-                        /* Points to driver's pending requests list   */
-   int cylinder,        /* Cylinder number                            */
-       drive_status,    /* Flag for the status of the disk drive      */
-       idle_counter,    /* Counter for number of idle requests        */
-       index,           /* Index for a request in the message         */
-       sector,          /* Sector number                              */
-       track;           /* Track number                               */
+   MESSAGE fs_message[MESSAGE_SIZE],
+                           /* Message of requests sent to FILE SYSTEM */
+           pending_requests[MESSAGE_SIZE];
+                           /* Driver's pending requests list          */
+   int     cylinder,       /* Cylinder number                         */
+           drive_status,   /* Flag for the status of the disk drive   */
+           error_number,   /* Indicates invalid request paramters     */
+           idle_counter,   /* Counter for number of idle requests     */
+           sector,         /* Sector number                           */
+           total_requests, /* Total number of pending requests        */
+           track;          /* Track number                            */
 
-   /* Create the message to be sent to and from the FILE SYSTEM       */
-   fs_message = (MESSAGE *) malloc(MESSAGE_SIZE * sizeof(MESSAGE));
-   
-   /* Create the driver's empty list of pending requests              */
-   p_pending_requests[MESSAGE_SIZE];
+   drive_status   = 0;
+   idle_counter   = 0;
+   total_requests = 0;
 
-   /* Send an idle message to the FILE SYSTEM, requesting work        */
+   /* Initialize the FILE SYSTEM message and the driver's pending     */
+   /* requests list; create an idle request and send to FILE SYSTEM   */
+   clear_requests(fs_message);
+   clear_requests(pending_requests);
+   create_idle_request(fs_message);
    send_message(fs_message);
-   drive_status = 0;
-   idle_counter = 0;
 
-   /* Loop continuously processing the pending requests list          */
+   /* Loop continuously processing pending requests from FILE SYSTEM  */
    while(true)
-   {
-      if(idle_counter == 0 && 
-         drive_status == 0 &&
-         fs_message[0].operation_code != 0)
-      {
-         drive_status = disk_drive(START_MOTOR_CODE, 0, 0, 0, 0);
-         disk_drive(STATUS_MOTOR_CODE, 0, 0, 0, 0);
-         drive_status = -1;
-      }
+   {    
+      /* Populate the driver's pending request list with FILE SYSTEM  */
+      /* requests                                                     */
+      populate_driver_list(fs_message, pending_requests, &total_requests);
 
-      /* Handle an idle requests                                      */
-      if(fs_message[0].operation_code == 0 &&
-         fs_message[0].request_number == 0 &&
-         fs_message[0].block_number   == 0 &&
-         fs_message[0].block_size     == 0)
+      /* Send idle message to FILE SYSTEM if no pending requests      */
+      if(total_requests == 0)
       {
+         create_idle_request(fs_message);
          idle_counter += 1;
-         if(idle_counter == 2)
+         
+         /* Turn motor off if number of idle requests is sufficient   */
+         if(idle_counter == IDLE_MOTOR_OFF)
          {
             send_message(fs_message);
-            if(drive_status == -1)
-            {  
-               disk_drive(STOP_MOTOR_CODE, 0, 0, 0, 0);
-               
-               drive_status = 0;
-               idle_counter = 0;
-            }
-            else
+            
+            if(drive_status != MOTOR_OFF)
             {
-               if(drive_status == 0)
-               {
-                  idle_counter = 0;
-               }
+               disk_drive(STOP_MOTOR_CODE, 0, 0, 0, 0);
+               drive_status = MOTOR_OFF;
             }
+            idle_counter = 0;
          }
-         continue;
       }
       else
       {
+         /* Turn motor on and verify it is up to speed                */
+         if(drive_status == MOTOR_OFF)
+         {
+            drive_status = disk_drive(START_MOTOR_CODE, 0, 0, 0, 0);
+            disk_drive(STATUS_MOTOR_CODE, 0, 0, 0, 0);
+            idle_counter = 0;
+         }
          
-         printf("\nOperation Code: %d", fs_message[0].operation_code);
-         printf("\nRequest Number: %d", fs_message[0].request_number);
-         printf("\nBlock Number  : %d", fs_message[0].block_number);
-         printf("\nBlock Size    : %d", fs_message[0].block_size);
-         printf("\n\n");
+         /* Sort driver's pending requests list in ascending block    */
+         /* number                                                    */
+         sort_requests(pending_requests, &total_requests);
 
-         int oof;
-            printf("\n\nBefore sorting222:");
-            for(oof = 0; oof < MESSAGE_SIZE; oof++)
-            {
-               printf("\nRequest Number: %d", fs_message[oof].request_number);
-            }
-            printf("\n\n");
+         /* Check if the current request has invalid paramters        */
+         error_number = check_request(pending_requests[0]);
+         if(error_number == 0)
+         {
             
-            sort_requests(fs_message);
+            /* Convert a request's block number to its corresponding  */
+            /* cylinder, track, and sector numbers                    */
+            convert_block(pending_requests[0].block_number,
+                                             &cylinder, &track, &sector);
+
+            /* Seek for the cylinder the request is located in        */
+            if(disk_drive(SENSE_CODE, 0, 0, 0, 0) != cylinder)
+            {
+               while(disk_drive(SEEK_CODE, cylinder, 0, 0, 0) != cylinder)
+               {
+                  while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
+               }
+            }
             
-            /*check_request(fs_message[index], fs_message);*/
-            int counter;
-            printf("\n\nAfter sorting:");
-            for(counter = 0; counter < MESSAGE_SIZE; counter++)
+            /* Set DMA chip registers for the next read/write job     */
+            disk_drive(DMA_SETUP_CODE, sector, track,
+                        pending_requests[0].block_size,
+                        pending_requests[0].p_data_address);
+            
+            if(pending_requests[0].operation_code == 1)
             {
-               printf("\nRequest Number: %d", fs_message[counter].request_number);
-            }
-            printf("\n\n");
-         
-         
-         /* Process each individual request in the list                  */
-         for(index = 0; index < MESSAGE_SIZE; index++)
-         {           
-            sort_requests(fs_message);
-
-            printf("\n\nAfter sorting:");
-            for(oof = 0; oof < MESSAGE_SIZE; oof++)
-            {
-               printf("\nRequest Number: %d", fs_message[oof].request_number);
-            }
-            printf("\n\n");
-
-            int counter;
-            printf("\n\nList:");
-            for(counter = 0; counter < MESSAGE_SIZE; counter++)
-            {
-               printf("\nRequest Number: %d", fs_message[counter].request_number);
-            }
-            printf("\n\n");
-
-            printf("\nindex: %d", index);
-
-            if((fs_message[index].operation_code == 1  ||
-                fs_message[index].operation_code == 2) &&
-                fs_message[0].operation_code != 0)
-            {            
-               convert_block(fs_message[index].block_number, &cylinder,
-                                                         &track, &sector);
-
-               /* Seek for the correct cylinder the request is at        */
-               if(disk_drive(SENSE_CODE, 0, 0, 0, 0) != cylinder)
-               {
-                  printf("\n\nCylinder is: %d", disk_drive(SENSE_CODE, 0, 0, 0, 0));
-                  printf("\nCylinder should be: %d", cylinder);
-                  printf("\n\n");
-
-                  while(disk_drive(SEEK_CODE, cylinder, 0, 0, 0) != cylinder)
-                  {
-                     while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
-                  }
-               }
-
-               /* Set DMA chip registers for the next read/write job    */
-               disk_drive(DMA_SETUP_CODE, sector, track,
-                          fs_message[index].block_size,
-                          fs_message[index].p_data_address);
-               
-               if(fs_message[index].operation_code == 1)
-               {
-                  /* Perform read request and fix checksum errors      */  
-                  while(disk_drive(READ_DATA_CODE, 0, 0, 0, 0) != 0);
-                  fs_message[index].operation_code = 0;
-                  
-                  
-                  
-
-                  int oof;
-                  printf("\n\nList before sending:");
-                  for(oof = 0; oof < MESSAGE_SIZE; oof++)
-                  {
-                     printf("\nRequest Number: %d", fs_message[oof].request_number);
-                  }
-                  printf("\n\n");
-
-                  send_message(fs_message);
-                  
-
-                  if(fs_message[index].request_number == 0 &&
-                     index == 0)
-                  {
-                     printf("\n\nVerified!\n\n");
-                     sort_requests(fs_message);
-                  }
-
-                  break;
-               }
-               else
-               {
-                  /* Perform write request and fix checksum errors     */
-                  while(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) != 0);
-                  fs_message[index].operation_code = 0;
-                  
-                  printf("\n\nList before sending333:");
-                  for(oof = 0; oof < MESSAGE_SIZE; oof++)
-                  {
-                     printf("\nRequest Number: %d", fs_message[oof].request_number);
-                  }
-                  printf("\n\n");
-
-                  send_message(fs_message);
-                  
-                  printf("\n\nList after sending:");
-                  for(oof = 0; oof < MESSAGE_SIZE; oof++)
-                  {
-                     printf("\nRequest Number: %d", fs_message[oof].request_number);
-                  }
-                  printf("\n\n");
-
-                  if(fs_message[index].request_number == 0 &&
-                     index == 0)
-                  {
-                     printf("\n\nVerified 2!\n\n");
-                     sort_requests(fs_message);
-                  }
-
-                  
-
-                  break;
-               }
+               /* Perform read request and fix checksum errors        */  
+               while(disk_drive(READ_DATA_CODE, 0, 0, 0, 0) != 0);
+               pending_requests[0].operation_code = 0;
+               reset_lists(pending_requests, fs_message, &total_requests);
             }
             else
             {
-               if(fs_message[0].operation_code == 0)
-               {
-                  index = 0;
-               }
-               else
-               {
-                  break;
-               }
+               /* Perform write request and fix checksum errors       */  
+               while(disk_drive(WRITE_DATA_CODE, 0, 0, 0, 0) != 0);
+               pending_requests[0].operation_code = 0;
+               reset_lists(pending_requests, fs_message, &total_requests);
             }
+         }
+         else
+         {
+            /* Send the request with incorrect parameters back to the */
+            /* FILE SYSTEM                                            */
+            pending_requests[0].operation_code = error_number;
+            reset_lists(pending_requests, fs_message, &total_requests);
          }
       }
    }
-
+   
    return 0;
+}
+
+/**********************************************************************/
+/*     Create an idle request for the FILE SYSTEM to request work     */
+/**********************************************************************/
+void create_idle_request(MESSAGE *p_message_list)
+{
+   p_message_list[0].operation_code = 0;
+   p_message_list[0].request_number = 0;
+   p_message_list[0].block_number   = 0;
+   p_message_list[0].block_size     = 0;
+   p_message_list[0].p_data_address = NULL;
+
+   return;
+}
+
+/**********************************************************************/
+/*   Add requests to driver's pending requests list from FILE SYSTEM  */
+/**********************************************************************/
+void populate_driver_list(MESSAGE *p_message_list,
+                          MESSAGE *p_request_list, int *p_requests)
+{
+   int index; /* Index for a request in the pending requests list     */
+
+   index = 0;
+
+   while((index < MESSAGE_SIZE) &&
+         (p_message_list[index].operation_code != 0))
+   {
+      p_request_list[*p_requests] = p_message_list[index];
+      *p_requests += 1;
+      index++;
+   }
+ 
+   return;
+}
+
+/**********************************************************************/
+/*      Populate message for FILE SYSTEM with completed requests      */
+/**********************************************************************/
+void populate_message(MESSAGE *p_message_list, MESSAGE *p_request_list)
+{    
+   p_message_list[0].operation_code = p_request_list[0].operation_code;
+   p_message_list[0].request_number = p_request_list[0].request_number;
+   p_message_list[0].block_number   = p_request_list[0].block_number;
+   p_message_list[0].block_size     = p_request_list[0].block_size;
+   p_message_list[0].p_data_address = p_request_list[0].p_data_address;
+
+   return;
 }
 
 /**********************************************************************/
@@ -377,43 +328,74 @@ void convert_block(int block_number,    int *p_cylinder_number,
 /**********************************************************************/
 /*                Count the number of pending requests                */
 /**********************************************************************/
-int count_requests(MESSAGE *fs_message)
+int count_requests(MESSAGE *p_request_list)
 {
-   int requests; /* Number of pending requests in the message         */
+   int index,    /* Index for a request in the driver's list          */
+       requests; /* Number of pending requests in the message         */
 
+   index    = 0,
    requests = 0;
-   while(requests < MESSAGE_SIZE &&
-         fs_message[requests].operation_code != 0 &&
-         fs_message[requests+1].operation_code != 0)
+   
+   while(index < MESSAGE_SIZE && p_request_list[index].operation_code != 0)
    {
       requests += 1;
+      index++;
    }
    
    return requests;
 }
 
 /**********************************************************************/
-/*     Sort requests within the message by ascending block number     */
+/*           Sort pending requests by ascending block number          */
 /**********************************************************************/
-void sort_requests(MESSAGE *fs_message)
+void sort_requests(MESSAGE *p_request_list, int *p_requests)
 {        
    MESSAGE temp_request; /* Temporary request for swap               */
-       int index;        /* Index for a request in the message       */
-
-   index = 0;
-   while(index < MESSAGE_SIZE)
+       int inner_index,  /* Index of a request for inner loop        */
+           outer_index;  /* Index of a request for outer loop        */           
+   
+   for(outer_index = 0; outer_index < *p_requests; outer_index++)
    {
-      if(((fs_message[index].block_number > 
-           fs_message[index+1].block_number) &&
-          (fs_message[index+1].block_number != 0)) ||
-          (fs_message[index].block_number == 0))
+      for(inner_index = 0; inner_index < *p_requests - outer_index - 1;
+                                                         inner_index++)
       {
-         temp_request        = fs_message[index];
-         fs_message[index]   = fs_message[index+1];
-         fs_message[index+1] = temp_request;
+         if((p_request_list[inner_index].block_number >
+             p_request_list[inner_index+1].block_number) &&
+            (p_request_list[inner_index+1].block_number != 0))
+         {
+            temp_request = p_request_list[inner_index];
+            p_request_list[inner_index] 
+                         = p_request_list[inner_index + 1];
+            p_request_list[inner_index + 1]
+                         = temp_request;
+         }
       }
-      
-      index++;
+   }   
+
+   return;
+}
+
+/**********************************************************************/
+/*   Remove a finished request from the driver's pending requst list  */
+/**********************************************************************/
+void remove_finished_request(MESSAGE *p_request_list)
+{
+   MESSAGE temp_request; /* Temporary request for swap                */
+   int     index;        /* Index for a request in the driver's list  */
+
+   for(index = 0; index < MESSAGE_SIZE; index++)
+   {
+      if(p_request_list[index].operation_code == 0 &&
+         p_request_list[index].request_number == 0 &&
+         p_request_list[index].block_number   == 0 &&
+         p_request_list[index].block_size     == 0 &&
+         p_request_list[index].p_data_address == NULL &&
+         p_request_list[index + 1].operation_code != 0)
+      {
+         temp_request              = p_request_list[index];
+         p_request_list[index]     = p_request_list[index + 1];
+         p_request_list[index + 1] = temp_request; 
+      }
    }
 
    return;
@@ -422,328 +404,94 @@ void sort_requests(MESSAGE *fs_message)
 /**********************************************************************/
 /*            Check a request for any incorrect parameters            */
 /**********************************************************************/
-void check_request(MESSAGE request, MESSAGE *fs_message)
+int check_request(MESSAGE request)
 {
-   if(check_address       (request) && check_block_size    (request) &&
-      check_block_number  (request) && check_request_number(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_BLOCK   + INVALID_REQUEST    +
-                               INVALID_OPERATION;
-
-      send_message(fs_message);
-   }
+   int bytes_per_cylinder, /* Number of bytes in a cylinder           */
+       error_number;       /* Number indicating invalid request       */
+                           /* parameters                              */
    
-   if(check_address     (request) && check_block_size    (request) &&
-      check_block_number(request) && check_request_number(request))
+   error_number       = 0;
+   bytes_per_cylinder = BYTES_PER_SECTOR * SECTORS_PER_TRACK *
+                        TRACKS_PER_CYLINDER;
+
+   if(request.operation_code != 1 &&
+      request.operation_code != 2)
    {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_BLOCK   + INVALID_REQUEST;
-      
-      send_message(fs_message);
+      error_number += INVALID_OPERATION;
    }
 
-   if(check_address     (request) && check_block_size    (request) &&
-      check_block_number(request) && check_operation_code(request))
+   if(request.request_number <= 0)
    {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_BLOCK   + INVALID_OPERATION;
-      
-      send_message(fs_message);
+      error_number += INVALID_REQUEST;
    }
 
-   if(check_address     (request) && check_block_size    (request) &&
-      check_block_number(request))
+   if(request.block_number < 1 || request.block_number > 360)
    {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_BLOCK;
-      
-      send_message(fs_message);
+      error_number += INVALID_BLOCK;
    }
 
-   if(check_address       (request) && check_block_size    (request) &&
-      check_request_number(request) && check_operation_code(request))
+   if(request.block_size < 0 || (double) request.block_size ==
+      log10(request.block_size) / log10(2.0) ||
+      request.block_size > bytes_per_cylinder)
    {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_REQUEST + INVALID_OPERATION;
-      
-      send_message(fs_message);
+      error_number += INVALID_BLOCK_SIZE;
    }
 
-   if(check_address       (request) && check_block_size(request) &&
-      check_request_number(request))
+   if(request.p_data_address < 0)
    {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_REQUEST;
-      
-      send_message(fs_message);
+      error_number += INVALID_ADDRESS;
    }
 
-   if(check_address       (request) && check_block_size(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE +
-                               INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
+   return error_number;
+}
 
-   if(check_address(request) && check_block_size(request))
+/**********************************************************************/
+/*                 Clear requests from a request list                 */
+/**********************************************************************/
+void clear_requests(MESSAGE *p_request_list)
+{
+   int index; /* Index for a request in a pending request list        */
+   
+   for(index = 0; index < MESSAGE_SIZE; index++)
    {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK_SIZE;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address     (request) && check_request_number(request) &&
-      check_block_number(request) && check_operation_code(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
-                               INVALID_BLOCK   + INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address     (request) && check_request_number(request) &&
-      check_block_number(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
-                               INVALID_BLOCK;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address       (request) && check_block_number(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK +
-                               INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address(request) && check_block_number(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_BLOCK;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address       (request) && check_request_number(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST +
-                               INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address(request) && check_request_number(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_REQUEST;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address(request) && check_operation_code(request))
-   {
-      request.operation_code = INVALID_ADDRESS + INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_address(request))
-   {
-      request.operation_code = INVALID_ADDRESS;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size    (request) && check_block_number  (request) &&
-      check_request_number(request) && check_operation_code(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
-                               INVALID_REQUEST    + INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size    (request) && check_block_number(request) &&
-      check_request_number(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
-                               INVALID_REQUEST;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size    (request) && check_block_number(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK +
-                               INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size(request) && check_block_number(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_BLOCK;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size    (request) && check_request_number(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_REQUEST +
-                               INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size(request) && check_request_number(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_REQUEST;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size(request) && check_operation_code(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE + INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_size(request))
-   {
-      request.operation_code = INVALID_BLOCK_SIZE;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_number  (request) && check_request_number(request) &&
-      check_operation_code(request))
-   {
-      request.operation_code = INVALID_BLOCK + INVALID_REQUEST +
-                               INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_number(request) && check_request_number(request))
-   {
-      request.operation_code = INVALID_BLOCK + INVALID_REQUEST;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_number(request) &&check_operation_code(request))
-   {
-      request.operation_code = INVALID_BLOCK + INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_block_number(request))
-   {
-      request.operation_code = INVALID_BLOCK;
-      
-      send_message(fs_message);
-   }
-
-   if(check_request_number(request) && check_operation_code(request))
-   {
-      request.operation_code = INVALID_REQUEST + INVALID_OPERATION;
-      
-      send_message(fs_message);
-   }
-
-   if(check_request_number(request))
-   {
-      request.operation_code = INVALID_REQUEST;
-      
-      send_message(fs_message);
-   }
-
-   if(check_operation_code(request))
-   {
-      request.operation_code = INVALID_OPERATION;
-      
-      send_message(fs_message);
+      p_request_list[index].operation_code = 0;
+      p_request_list[index].request_number = 0;
+      p_request_list[index].block_number   = 0;
+      p_request_list[index].block_size     = 0;
+      p_request_list[index].p_data_address = NULL;
    }
 
    return;
 }
 
 /**********************************************************************/
-/*             Check a request for invalid operation code             */
+/*       Clear data from a completed request in the pending list      */
 /**********************************************************************/
-int check_operation_code(MESSAGE request)
-{   
-   return (request.operation_code != 1 || request.operation_code != 2);
+void clear_first_request(MESSAGE *p_request_list, int *p_requests)
+{
+   p_request_list[0].operation_code = 0;
+   p_request_list[0].request_number = 0;
+   p_request_list[0].block_number   = 0;
+   p_request_list[0].block_size     = 0;
+   p_request_list[0].p_data_address = NULL;
+   *p_requests -= 1;
+
+   return;
 }
 
 /**********************************************************************/
-/*             Check a request for invalid request number             */
+/*         Resets the pending requests lists for more requests        */
 /**********************************************************************/
-int check_request_number(MESSAGE request)
+void reset_lists(MESSAGE *p_request_list, MESSAGE *p_message_list,
+                                                        int *p_requests)
 {
-   return (request.request_number <= 0);
-}
-
-/**********************************************************************/
-/*              Check a request for invalid block number              */
-/**********************************************************************/
-int check_block_number(MESSAGE request)
-{
-   return (request.block_number < 1 || request.block_number > 360);
-}
-
-/**********************************************************************/
-/*               Check a request for invalid block size               */
-/**********************************************************************/
-int check_block_size(MESSAGE request)
-{
-   int bytes_per_cylinder; /* Number of bytes per DISK cylinder       */
-
-   bytes_per_cylinder = BYTES_PER_SECTOR * SECTORS_PER_TRACK *
-                        TRACKS_PER_CYLINDER;
-   
-   return (request.block_size < 0 ||
-          (double) request.block_size ==
-                               log10(request.block_size) / log10(2.0) ||
-          request.block_size > bytes_per_cylinder);
-}
-
-/**********************************************************************/
-/*              Check a request for invalid data address              */
-/**********************************************************************/
-int check_address(MESSAGE request)
-{
-   return (request.p_data_address < 0);
-}
-
-/**********************************************************************/
-/*         Schedule the next request for the driver to work on        */
-/**********************************************************************/
-void schedule_disk(MESSAGE *fs_message)
-{
-   int cylinder,        /* Cylinder number                            */
-       sector,          /* Sector number                              */
-       track;           /* Track number                               */
-   
-   convert_block(fs_message[1].block_number, &cylinder, &track, &sector);
-
-   if(disk_drive(SENSE_CODE, 0, 0, 0, 0) < cylinder)
-   {
-      while(disk_drive(SEEK_CODE, 0, 0, 0, 0) != cylinder)
-      {
-         while(disk_drive(RECALIBRATE_CODE, 0, 0, 0, 0) != 0);
-      }
-   }
+   clear_requests(p_message_list);
+   populate_message(p_message_list, p_request_list);
+   send_message(p_message_list);
+   clear_first_request(p_request_list, p_requests);
+   remove_finished_request(p_message_list);
+   remove_finished_request(p_request_list);
+   sort_requests(p_message_list, p_requests);
 
    return;
 }
