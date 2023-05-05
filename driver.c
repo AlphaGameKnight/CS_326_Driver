@@ -29,8 +29,9 @@
 /*                                                                    */
 /* This program accepts read/write requests from a FILE SYSTEM,       */
 /* translates them from physical block numbers into disk drive        */
-/* cylinder, trak, and sector numbers, then instructs a DISK device   */
-/* to carry out the read and write requests.                          */
+/* cylinder, track, and sector numbers, then instructs a DISK device  */
+/* to carry out the read and write requests, sending completed tasks  */
+/* back to the FILE SYSTEM and fixing any checksum or seek errors.    */
 /*                                                                    */
 /**********************************************************************/
 
